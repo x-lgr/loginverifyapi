@@ -1,2 +1,3 @@
 # No external dependencies needed - Python standard library only
 # This file just tells Vercel it's a Python project
+flask
