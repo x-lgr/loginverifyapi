@@ -8,6 +8,7 @@ import hmac
 import hashlib
 
 # ===== CONFIGURATION =====
+EXPECTED_USERNAME = os.environ.get("API_USERNAME", "admin")
 EXPECTED_PASSWORD = os.environ.get("API_PASSWORD", "ChangeMe123!@#")
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", "10"))
 BLOCK_MINUTES = int(os.environ.get("BLOCK_MINUTES", "1"))
@@ -15,10 +16,12 @@ BLOCK_MINUTES = int(os.environ.get("BLOCK_MINUTES", "1"))
 # ===== RATE LIMITING STORAGE =====
 failed_attempts = defaultdict(list)
 
-# ===== SECURE PASSWORD VERIFICATION =====
-def verify_password(provided, expected):
-    """Timing-attack safe password comparison"""
-    return hmac.compare_digest(provided.encode(), expected.encode())
+# ===== SECURE CREDENTIALS VERIFICATION =====
+def verify_credentials(provided_username, provided_password, expected_username, expected_password):
+    """Timing-attack safe credentials comparison"""
+    username_valid = hmac.compare_digest(provided_username.encode(), expected_username.encode())
+    password_valid = hmac.compare_digest(provided_password.encode(), expected_password.encode())
+    return username_valid and password_valid
 
 # ===== RATE LIMIT CHECK =====
 def is_rate_limited(client_ip):
@@ -36,12 +39,16 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
+        provided_username = params.get("username", [None])[0]
         provided_password = params.get("pass", [None])[0]
         
         client_ip = self.headers.get('X-Forwarded-For', 'unknown').split(',')[0].strip()
         
-        if not provided_password:
-            self.send_json_response(400, {"error": "Missing 'pass' parameter", "result": False})
+        if not provided_username or not provided_password:
+            self.send_json_response(400, {
+                "error": "Missing 'username' or 'pass' parameter", 
+                "result": False
+            })
             return
         
         if is_rate_limited(client_ip):
@@ -51,7 +58,10 @@ class handler(BaseHTTPRequestHandler):
             })
             return
         
-        is_valid = verify_password(provided_password, EXPECTED_PASSWORD)
+        is_valid = verify_credentials(
+            provided_username, provided_password, 
+            EXPECTED_USERNAME, EXPECTED_PASSWORD
+        )
         
         if not is_valid:
             record_failed_attempt(client_ip)
@@ -67,6 +77,7 @@ class handler(BaseHTTPRequestHandler):
         
         try:
             post_data = json.loads(self.rfile.read(content_length))
+            provided_username = post_data.get("username")
             provided_password = post_data.get("pass")
         except:
             self.send_json_response(400, {"error": "Invalid JSON", "result": False})
@@ -74,8 +85,11 @@ class handler(BaseHTTPRequestHandler):
         
         client_ip = self.headers.get('X-Forwarded-For', 'unknown').split(',')[0].strip()
         
-        if not provided_password:
-            self.send_json_response(400, {"error": "Missing 'pass' field", "result": False})
+        if not provided_username or not provided_password:
+            self.send_json_response(400, {
+                "error": "Missing 'username' or 'pass' field", 
+                "result": False
+            })
             return
         
         if is_rate_limited(client_ip):
@@ -85,7 +99,10 @@ class handler(BaseHTTPRequestHandler):
             })
             return
         
-        is_valid = verify_password(provided_password, EXPECTED_PASSWORD)
+        is_valid = verify_credentials(
+            provided_username, provided_password, 
+            EXPECTED_USERNAME, EXPECTED_PASSWORD
+        )
         
         if not is_valid:
             record_failed_attempt(client_ip)
